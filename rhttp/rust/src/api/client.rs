@@ -185,6 +185,7 @@ fn create_client(settings: ClientSettings) -> Result<RequestClient, RhttpError> 
                     client = client.tcp_keepalive(timeout);
                     client = client.http2_keep_alive_while_idle(true);
                     client = client.http2_keep_alive_timeout(timeout);
+                    client = client.http3_max_idle_timeout(timeout);
                 }
             }
 
@@ -199,7 +200,7 @@ fn create_client(settings: ClientSettings) -> Result<RequestClient, RhttpError> 
 
         if let Some(tls_settings) = settings.tls_settings {
             if !tls_settings.trust_root_certificates {
-                client = client.tls_built_in_root_certs(false);
+                client = client.tls_certs_only(vec![]);
             }
 
             for cert in tls_settings.trusted_root_certificates {
