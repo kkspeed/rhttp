@@ -199,17 +199,42 @@ fn create_client(settings: ClientSettings) -> Result<RequestClient, RhttpError> 
         }
 
         if let Some(tls_settings) = settings.tls_settings {
-            if !tls_settings.trust_root_certificates {
-                client = client.tls_certs_only(vec![]);
-            }
+            if tls_settings.trust_root_certificates {
+                let mut roots = rustls::RootCertStore::empty();
+                roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
 
-            for cert in tls_settings.trusted_root_certificates {
-                client =
-                    client.add_root_certificate(Certificate::from_pem(&cert).map_err(|e| {
-                        RhttpError::RhttpUnknownError(format!(
-                            "Error adding trusted certificate: {e:?}"
-                        ))
-                    })?);
+                for cert in tls_settings.trusted_root_certificates {
+                    let mut reader = std::io::Cursor::new(cert);
+                    let certs = rustls_pemfile::certs(&mut reader)
+                        .collect::<Result<Vec<_>, _>>()
+                        .map_err(|e| RhttpError::RhttpUnknownError(format!("Error parsing root certificate: {e:?}")))?;
+                    for cert in certs {
+                        roots.add(cert).map_err(|e| {
+                            RhttpError::RhttpUnknownError(format!("Error adding root certificate: {e:?}"))
+                        })?;
+                    }
+                }
+
+                let verifier = rustls::client::WebPkiServerVerifier::builder(Arc::new(roots))
+                    .build()
+                    .map_err(|e| {
+                        RhttpError::RhttpUnknownError(format!("Error building verifier: {e:?}"))
+                    })?;
+
+                // Enable tls_certs_only to prevent reqwest from trying to use rustls-platform-verifier
+                // which causes build issues on Android due to missing dependencies/symbols.
+                client = client.tls_certs_only(vec![]);
+                client = client.dangerous().with_custom_certificate_verifier(verifier);
+            } else {
+                client = client.tls_certs_only(vec![]);
+                for cert in tls_settings.trusted_root_certificates {
+                    client =
+                        client.add_root_certificate(Certificate::from_pem(&cert).map_err(|e| {
+                            RhttpError::RhttpUnknownError(format!(
+                                "Error adding trusted certificate: {e:?}"
+                            ))
+                        })?);
+                }
             }
 
             if !tls_settings.verify_certificates {
@@ -245,7 +270,21 @@ fn create_client(settings: ClientSettings) -> Result<RequestClient, RhttpError> 
             }
 
             client = client.tls_sni(tls_settings.sni);
+        } else {
+            // Default behavior: Trust WebPKI roots
+            let mut roots = rustls::RootCertStore::empty();
+            roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+            
+            let verifier = rustls::client::WebPkiServerVerifier::builder(Arc::new(roots))
+                .build()
+                .map_err(|e| {
+                    RhttpError::RhttpUnknownError(format!("Error building verifier: {e:?}"))
+                })?;
+
+            client = client.tls_certs_only(vec![]);
+            client = client.dangerous().with_custom_certificate_verifier(verifier);
         }
+
 
         client = match settings.http_version_pref {
             HttpVersionPref::Http10 | HttpVersionPref::Http11 => client.http1_only(),
