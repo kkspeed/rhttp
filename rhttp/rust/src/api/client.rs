@@ -190,11 +190,12 @@ fn create_client(settings: ClientSettings) -> Result<RequestClient, RhttpError> 
             }
 
             if let Some(keep_alive_ping) = timeout_settings.keep_alive_ping {
-                client = client.http2_keep_alive_interval(
-                    keep_alive_ping
-                        .to_std()
-                        .map_err(|e| RhttpError::RhttpUnknownError(e.to_string()))?,
-                );
+                let keep_alive_ping = keep_alive_ping
+                    .to_std()
+                    .map_err(|e| RhttpError::RhttpUnknownError(e.to_string()))?;
+
+                client = client.http2_keep_alive_interval(keep_alive_ping);
+                client = client.http3_keep_alive_interval(keep_alive_ping);
             }
         }
 
